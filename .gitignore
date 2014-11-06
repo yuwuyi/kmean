@@ -69,3 +69,8 @@ $RECYCLE.BIN/
 *.msi
 *.msm
 *.msp
+*.tlog
+Debug/
+Release/
+
+*.filters
