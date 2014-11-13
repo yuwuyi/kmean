@@ -8,7 +8,7 @@
 #include <set>
 #include <map>
 
-#include "Point.h"
+#include "MeshLib_Core/Point.h"
 #include "DualGraph.h"
 //#include "prettyprint.h"
 
@@ -81,13 +81,15 @@ GraphNode *DualGraph::addNode(double weight) {
 }
 
 GraphEdge *DualGraph::addEdge(GraphNode *from, GraphNode *to, double weight) {
-    GraphEdge *edge = new GraphEdge(from, to, weight);
+    
     //std::pair<int, int> p = std::make_pair(std::min(from->id(), to->id()), std::max(from->id(), to->id()));
 	std::pair<int, int> p = std::make_pair(from->id(), to->id());
     if (m_edges[p]) {
-        std::cerr << "duplicated edge! " << from->id() << " -- " << to->id() << "\n";
-        exit(-1);
+        //std::cerr << "duplicated edge! " << from->id() << " -- " << to->id() << "\n";
+        //exit(-1);
+		return m_edges[p];
 	}
+	GraphEdge *edge = new GraphEdge(from, to, weight);
     m_edges[p] = edge;
 
     from->addEdge(edge);

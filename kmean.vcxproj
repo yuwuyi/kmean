@@ -64,12 +64,14 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="DualGraph.cpp" />
     <ClCompile Include="growing.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MeshLib_Core\Mesh.cpp" />
     <ClCompile Include="MeshLib_Core\Vertex.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="DualGraph.h" />
     <ClInclude Include="growing.h" />
     <ClInclude Include="MeshLib_Core\Edge.h" />
     <ClInclude Include="MeshLib_Core\Face.h" />

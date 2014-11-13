@@ -12,7 +12,7 @@
 #include "MeshLib_Core/Mesh.h"
 #include "MeshLib_Core/Iterators.h"
 
-#include "growing.h"
+#include "DualGraph.h"
 
 Point center(Face *face) {
 	Point point;
@@ -34,6 +34,7 @@ double distance_linfinity(const Point & p1, const Point& p2) {
 }
 
 struct Patch {
+	GraphNode *graphNode;
 	Point center;
 	std::string colorStr;
 	std::set<Vertex*> vertices;
@@ -41,6 +42,7 @@ struct Patch {
 	int pid;
 	std::vector<Halfedge*> boundary;
 	std::vector<Vertex*> corners;
+	std::vector<Vertex*> sampledPoints;
 };
 
 
@@ -49,7 +51,8 @@ void generateSeeds(Mesh *mesh, std::vector<Patch*> &patches, int N) {
 
 	for (int i = 0; i < N; ++i) {
 		
-		int vid = rand() % mesh->numVertices() + 1;
+		//int vid = rand() % mesh->numVertices() + 1;
+		int vid = mesh->numVertices() % N + i;
 
 		Patch *patch = new Patch;
 		patch->center = mesh->indVertex(vid)->point();
@@ -228,7 +231,6 @@ void traceBoundary(Patch *patch) {
 }
 
 void traceBoundary(std::vector<Patch*>& patches) {
-	char buf[128];
 	int pid = 0;
 	for (auto p : patches) {
 		std::cout << "tracing patch: " << ++pid << "\n";
@@ -239,37 +241,71 @@ void traceBoundary(std::vector<Patch*>& patches) {
 		for (auto he : p->boundary) {
 			vertices.insert(he->source());
 		}
-		
-		sprintf_s(buf, "graph.%02d", pid);
-		std::ofstream output(buf);
-		for (auto v : vertices) {
-			output << "Vertex " << v->index() + 1 << " " << v->point()[0] << " " << v->point()[1] << " " << v->point()[2] << "\n";
- 		}
-		for (auto he : p->boundary) {
-			output << "Edge " << he->source()->index() + 1 << " " << he->target()->index() + 1 << "\n";
-		}
-		output.close();
-		
-		//sprintf_s(buf, "curve2m graph.%02d g%02d.m", pid, pid);
-		//system(buf);
 	}
 }
 
-void generateGraph(std::vector<Patch*>& patches) {
+
+double avg_length = 0;
+DualGraph* generateGraph(std::vector<Patch*>& patches) {
+	
+	DualGraph *dualGraph = new DualGraph;
+
 	std::map<Vertex*, std::vector<Patch*> > ver2patchMap;
 	for (auto p : patches) {
+
+		GraphNode *node = dualGraph->addNode();
+		p->graphNode = node;
+
 		for (auto v : p->vertices) {
+			auto pvec = ver2patchMap[v];
+			for (size_t i = 0; i < pvec.size(); ++i) {
+				Patch *p0 = pvec[i];
+				dualGraph->addEdge(p0->graphNode, node);
+				dualGraph->addEdge(node, p0->graphNode);
+			}
 			ver2patchMap[v].push_back(p);
 		}
 	}
 
+
+	//well.. let's print out the dualgraph
+
+	//convert the dual graph to cm
+	//first, the position, each center of the cluster
+	std::ofstream dgfile("dualgraph.cm");
+	
+	for (auto p : patches) {
+		GraphNode *gnode = p->graphNode;
+		dgfile << "Vertex " << gnode->id() + 1 << " " << p->center[0] << " " << p->center[1] << " " << p->center[2] << "\n";
+	}
+
+	for (auto p : patches) {
+		GraphNode *gnode = p->graphNode;
+		for (GraphNode::EdgeIter eit(gnode); !eit.end(); ++eit) {
+			GraphEdge *edge = *eit;
+			if (edge->to()->id() > gnode->id()) {
+				dgfile << "Edge " << edge->from()->id() + 1 << " " << edge->to()->id() + 1 << "\n";
+			}
+		}
+	}
+
+	dualGraph->saveMetis("dualgraph.metis");
+
+	dgfile.close();
+	
+
+
 	std::vector <std::string> edgestr;
 	std::set<Vertex*> vertices;
+	double total_boundary_length = 0;
+	int boundary_count = 0;
 	for (auto p : patches) {
 		std::set<Vertex*> pvertices;
 		for (auto he : p->boundary) {
 			
 			if (!he->twin()) {
+				total_boundary_length += (he->source()->point() - he->target()->point()).norm();
+				++boundary_count;
 				if ( ver2patchMap[he->source()].size() == 1) {
 					//continue;
 				}
@@ -289,6 +325,7 @@ void generateGraph(std::vector<Patch*>& patches) {
 				}
 				
 			}  
+
 			if ( ver2patchMap[he->source()].size() >= 3) {
 				vertices.insert(he->source());
 				auto itpair = pvertices.insert(he->source());			
@@ -311,40 +348,166 @@ void generateGraph(std::vector<Patch*>& patches) {
 		}
 	}
 
-	std::ofstream output("graph.cm");
+	avg_length = total_boundary_length / boundary_count;
+	std::map<Vertex*, int> prevOrder, nowOrder;
+	std::ofstream output("graph.m");
 
+	int vid = 1;
 	for (auto v : vertices) {
-		output << "Vertex " << v->index() + 1<< " " << v->point()[0] << " " << v->point()[1] << " " << v->point()[2] << "\n";
+		
+		output << "Vertex " << vid << " " << v->point()[0] << " " << v->point()[1] << " " << v->point()[2] << "\n";
+		prevOrder[v] = v->index();
+		nowOrder[v] = vid++;
+		
 	}
-
-
-	/*for (auto p : patches) {
-		size_t csize = p->corners.size();
-		for (size_t i = 0; i < csize; ++i) {
-			output << "Edge " << p->corners[i]->index() + 1 << " " << p->corners[(i + 1) % csize]->index() + 1 << "\n";
-		}
-	}
-	*/
 
 	int fid = 0;
 	for (auto p : patches) {
 		output << "Face " << ++fid << " ";
-		
-		
+	
 		for (auto v : p->corners) {
 			
-			output << v->index() + 1  << " ";
+			output << nowOrder[v]  << " ";
 		}
 		output << "\n";
 	}
+
+	for (auto v : vertices) {
+		
+		v->index() = prevOrder[v];
+	}
+
+	return dualGraph;
+}
+
+void sampling (std::vector<Patch*>& patches, double threhold) {
+	//collect all the edges..
+	//typedef std::pair<Vertex*, Vertex*> VertexPair;
+	//std::set< VertexPair > pairset;
+	typedef std::pair< std::pair<Vertex*, Vertex*>, int> SampledPoint;
+	std::map<SampledPoint, Vertex*> spmap;
+	for (auto p : patches) {
+		std::cout << "patch!\n";
+		size_t cornerSize = p->corners.size();
+		for (size_t i = 0 ; i < cornerSize; ++i) {
+			Vertex *v0 = p->corners[i];
+			Vertex *v1 = p->corners[(i + 1) % cornerSize];
+		
+			std::cout <<"v0: " << v0->point()[0] << " " << v0->point()[1] << " " << v0->point()[2] << "\n";
+			std::cout <<"v1: " << v1->point()[0] << " " << v1->point()[1] << " " << v1->point()[2] << "\n";
+
+			const Point p0 = v0->point();
+			const Point p1 = v1->point();
+			double length = (p0 - p1).norm();
+
+			p->sampledPoints.push_back(v0);
+
+			if (length > threhold) {
+				int numpt = length / threhold;
+		
+				for (int j = 1; j < numpt; ++j) {
+					SampledPoint sp = std::make_pair( std::make_pair(v0, v1), j);
+					//well, looking for the vertex is it's been created.
+					Vertex *v_new = spmap[sp];
+					if (!v_new) {
+						double lambda = (double) j / numpt;
+						Point newp = p0 * (1- lambda) + p1 * lambda;
+						v_new = new Vertex;
+						v_new->index() = -1;
+						v_new->point() = newp;
+
+						spmap[sp] = v_new;
+						sp = std::make_pair(std::make_pair(v1, v0), numpt - j);
+						spmap[sp] = v_new;
+					} else {
+						std::cout << "found match!  ";
+					}
+
+					std::cout << "  new pt" <<  v_new->point()[0] << " " <<v_new->point()[1] << " " << v_new->point()[2] << "\n";
+					for (int j = 0; j < p->sampledPoints.size(); ++j) {
+						Point chkp = p->sampledPoints[j]->point();
+						if ( (chkp - v_new->point()).norm() < 1e-6) {
+							std::cout << "cat!\n";
+						}
+					}
+					p->sampledPoints.push_back(v_new);
+				}
+			} 
+
+		
+		}
+	}
+
+	//okay, let's save out all the patches..
+
+	char buf[128];
+	
+	for (size_t i = 0; i < patches.size(); ++i) {
+		Patch *p = patches[i];
+
+		sprintf_s(buf, "patch_%02d", i + 1);
+		std::ofstream output(buf);
+		int vid = 0;
+		size_t spSize = p->sampledPoints.size();
+		for (size_t j = 0; j < spSize; ++j) {
+			Vertex *v = p->sampledPoints[j];
+			
+			output << "Vertex " << ++vid << " " << v->point()[0] << " " << v->point()[1] << " " << v->point()[2];
+			if (v->index() < 0)  {
+				output << " {new}";
+			}
+			output << "\n";
+		}
+
+		
+		for (size_t j = 0; j < spSize; ++j) {
+			output << "Edge " <<  j + 1 << " " << (j + 1) % spSize + 1 << "\n";
+		}
+
+		output.close();
+	}
+
+
+	std::ofstream sampled("sampled.m");
+	std::set<Vertex*> verset;
+	std::map<Vertex*, int> nowOrder;
+	int vid = 0;
+	for (auto p : patches) {
+		for (auto v: p->sampledPoints) {
+			auto it = verset.insert(v);
+			if (it.second) {
+
+				nowOrder[v] = ++vid;
+				sampled << "Vertex " << vid << " " << v->point()[0] << " " << v->point()[1] << " " << v->point()[2] << "\n";
+			}
+		}
+	}
+
+
+	int fid = 0;
+	for (auto p : patches) {
+		sampled << "Face " << ++fid << " ";
+		for (auto v : p->sampledPoints) {
+			sampled << nowOrder[v] << " ";
+		}
+		sampled << "\n";
+	}
+
+
+
+	sampled.close();
+
+
 }
 
 int main(int argc, char *argv[]) {
-	if (argc != 3) { 
-		std::cout << argv[0] << "input.m output.m\n";
+	if (argc != 4) { 
+		std::cout << argv[0] << "input.m patchnum sampling\n";
 		exit(-1);
 	}
 	
+	int patchnum = atoi(argv[2]);
+	double threshold = atof(argv[3]);
 	srand (static_cast <unsigned> (time(0)));
 
 	//load seeds;
@@ -353,12 +516,11 @@ int main(int argc, char *argv[]) {
 	//loadSeeds("seed2.m", patches);
 
 	Mesh *mesh = new Mesh;
-
 	mesh->readMFile(argv[1]);
 
-	generateSeeds(mesh, patches, 80);
+	generateSeeds(mesh, patches, patchnum);
 	
-	for (int i = 0; i <= 400; ++i) {
+	for (int i = 0; i <= 500; ++i) {
 		/*if (i % 100 == 0) {
 			sprintf_s(buf, "center_%d.cm", i+1);
 			saveCenters(buf, patches);
@@ -375,7 +537,11 @@ int main(int argc, char *argv[]) {
 	mesh->writeMFile("end.m");
 	std::cout << "end!\n";
 	traceBoundary(patches);
-	generateGraph(patches);
+	DualGraph *dualGraph = generateGraph(patches);
+
+	sampling(patches, avg_length);
+
+	delete dualGraph;
 	delete mesh;
 	return 0;
 } 
